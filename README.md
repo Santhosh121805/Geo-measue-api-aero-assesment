@@ -128,7 +128,18 @@ All errors return JSON: `{ "detail": "message" }`
 
 ![Architecture](docs/architecture.png)
 
+**How it works:**
 
+1. **Upload:** the user uploads a `.kml` or `.zip` file from the web UI, Swagger or curl to `POST /api/files/`.
+2. **Validate:** FastAPI checks the file type, size and zip safety, saves the file, and returns a file `id` straight away (status `PENDING`).
+3. **Process in the background:** for every feature in the file:
+   - **Read** it with GeoPandas
+   - **Fix** broken shapes (e.g. self-crossing polygons) and add a warning
+   - **Convert** coordinates from degrees (EPSG:4326) to metres in the local UTM zone
+   - **Measure** the area of polygons and the length of lines (points have no measurement)
+   - **Verify** the result against a curved-Earth (geodesic) calculation
+4. **Save:** results are stored in SQLite and the status becomes `COMPLETED`, or `FAILED` with a reason.
+5. **Read results:** `GET /api/files/{id}/` returns the file status, and `GET /api/files/{id}/measurements/` returns the measurements as JSON.
 
 ### Project structure
 ```
