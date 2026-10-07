@@ -165,6 +165,8 @@ Coordinates in longitude and latitude are angles, not distances. A degree of lon
 
 For each geographic feature, the service selects the UTM zone containing that feature's centroid and uses EPSG:326xx in the north or EPSG:327xx in the south. That allows one file to span UTM zones without forcing every feature into a single projection. Features wider than six degrees use Lambert Azimuthal Equal Area centered on the feature; polar features also use a local LAEA projection. Already projected data stays in its source CRS, with axis-unit conversion when the CRS uses feet.
 
+Projected Mercator-family inputs such as Web Mercator (EPSG:3857) are an exception: their scale distortion grows with latitude, so the feature is transformed to WGS84 and measured in a per-feature UTM or LAEA CRS. The source is identified from its coordinate-operation method, while Transverse Mercator CRSs such as UTM remain unchanged. A warning records the CRS used for measurement.
+
 The geometry is also transformed to EPSG:4326 and measured on the WGS84 ellipsoid with `pyproj.Geod`. The percentage difference from the projected result is returned, and differences above 0.5% add a warning. Missing CRS metadata is assumed to be EPSG:4326 only when all coordinates pass longitude/latitude bounds checks.
 
 ## Design Decisions
@@ -181,6 +183,7 @@ The geometry is also transformed to EPSG:4326 and measured on the WGS84 ellipsoi
 
 - Reject unsupported extensions, empty uploads, corrupt ZIPs, excessive upload sizes, zip-slip paths, symbolic links, duplicate archive paths, oversized extraction totals, too many archive entries, and ambiguous multiple Shapefiles.
 - Require `.shp`, `.shx`, and `.dbf`; report a missing `.prj` and validate coordinates before assuming WGS84.
+- Reproject Mercator-family sources before measuring area; do not apply that rule to Transverse Mercator/UTM sources.
 - Read all KML layers, discard Z coordinates, and fail empty or unreadable input as a persisted `FAILED` record.
 - Repair invalid geometries, retain unsupported and empty geometries without crashing, and handle points without inventing measurements.
 - Return `409` for measurements while processing, `422` for failed processing, and `404` for unknown IDs.

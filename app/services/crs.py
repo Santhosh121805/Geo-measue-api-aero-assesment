@@ -36,6 +36,12 @@ def _laea_crs(longitude: float, latitude: float) -> CRS:
     )
 
 
+def _is_distorting_mercator(source_crs: CRS) -> bool:
+    operation = source_crs.coordinate_operation
+    method_name = operation.method_name.casefold() if operation else ""
+    return "mercator" in method_name and "transverse mercator" not in method_name
+
+
 def select_projected_crs(
     geometry: BaseGeometry, source_crs_value: CRS | str | None
 ) -> tuple[CRS, CRS, list[str]]:
@@ -48,9 +54,10 @@ def select_projected_crs(
     if source_crs is None:
         source_crs, warnings = _assume_wgs84_if_valid(geometry)
 
-    if source_crs.is_projected:
+    mercator_source = source_crs.is_projected and _is_distorting_mercator(source_crs)
+    if source_crs.is_projected and not mercator_source:
         return source_crs, source_crs, warnings
-    if not source_crs.is_geographic:
+    if not source_crs.is_geographic and not mercator_source:
         raise ValueError("Source CRS must be geographic or projected.")
 
     geographic = _to_wgs84(geometry, source_crs)
@@ -62,6 +69,11 @@ def select_projected_crs(
 
     if longitude_span > 6 or latitude < -80 or latitude > 84:
         projected_crs = _laea_crs(longitude, latitude)
+        if mercator_source:
+            warnings.append(
+                "Source CRS distorts area (Mercator); reprojected to "
+                f"{projected_crs.to_string()} for measurement"
+            )
         if longitude_span > 6:
             warnings.append(
                 "Feature spans more than 6 degrees of longitude; Lambert Azimuthal Equal Area used."
@@ -72,4 +84,10 @@ def select_projected_crs(
 
     zone = min(60, max(1, floor((longitude + 180) / 6) + 1))
     epsg = (32600 if latitude >= 0 else 32700) + zone
-    return source_crs, CRS.from_epsg(epsg), warnings
+    projected_crs = CRS.from_epsg(epsg)
+    if mercator_source:
+        warnings.append(
+            "Source CRS distorts area (Mercator); reprojected to "
+            f"{projected_crs.to_string()} for measurement"
+        )
+    return source_crs, projected_crs, warnings
