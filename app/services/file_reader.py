@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import stat
 import tempfile
 import zipfile
+import xml.etree.ElementTree as ET
 
 import geopandas as gpd
 import pandas as pd
@@ -14,6 +15,9 @@ import pyogrio
 from shapely import force_2d
 
 from app.config import Settings, settings
+
+KML_NAMESPACE = "http://www.opengis.net/kml/2.2"
+KML_NAMESPACES = {"k": KML_NAMESPACE}
 
 
 @dataclass
@@ -60,7 +64,40 @@ def validate_zip_safety(path: Path, config: Settings = settings) -> None:
         raise ValueError("The uploaded ZIP file is corrupt or invalid.") from error
 
 
-def _read_kml(path: Path) -> gpd.GeoDataFrame:
+def _placemark_metadata(path: Path) -> list[dict[str, str]]:
+    root = ET.parse(path).getroot()
+    placemarks: list[dict[str, str]] = []
+    folder_tag = f"{{{KML_NAMESPACE}}}Folder"
+    placemark_tag = f"{{{KML_NAMESPACE}}}Placemark"
+
+    def visit(element: ET.Element, containing_folder: str | None = None) -> None:
+        if element.tag == folder_tag:
+            containing_folder = element.findtext(f"{{{KML_NAMESPACE}}}name") or containing_folder
+        if element.tag == placemark_tag:
+            properties: dict[str, str] = {}
+            for data in element.findall("k:ExtendedData/k:Data", KML_NAMESPACES):
+                name = data.get("name")
+                value = data.findtext("k:value", namespaces=KML_NAMESPACES)
+                if name and value is not None:
+                    properties[name] = value
+            for simple_data in element.findall(
+                "k:ExtendedData/k:SchemaData/k:SimpleData", KML_NAMESPACES
+            ):
+                name = simple_data.get("name")
+                if name and simple_data.text is not None:
+                    properties[name] = simple_data.text
+            if containing_folder:
+                properties["folder"] = containing_folder
+            placemarks.append(properties)
+            return
+        for child in element:
+            visit(child, containing_folder)
+
+    visit(root)
+    return placemarks
+
+
+def _read_kml(path: Path) -> ReadResult:
     try:
         layers = pyogrio.list_layers(path)
         if len(layers) == 0:
@@ -87,7 +124,24 @@ def _read_kml(path: Path) -> gpd.GeoDataFrame:
         pd.concat(aligned_frames, ignore_index=True), geometry=geometry_name, crs=source_crs
     )
     combined.geometry = force_2d(combined.geometry.array)
-    return combined
+    warnings: list[str] = []
+    try:
+        placemarks = _placemark_metadata(path)
+    except (ET.ParseError, OSError) as error:
+        warnings.append(f"KML Placemark metadata could not be read; ExtendedData was skipped: {error}")
+        return ReadResult(frame=combined, warnings=warnings)
+
+    if len(placemarks) != len(combined):
+        warnings.append(
+            "KML Placemark count does not match GeoDataFrame feature count; "
+            "ExtendedData was skipped."
+        )
+        return ReadResult(frame=combined, warnings=warnings)
+
+    metadata_keys = {key for properties in placemarks for key in properties}
+    for key in metadata_keys:
+        combined[key] = [properties.get(key) for properties in placemarks]
+    return ReadResult(frame=combined, warnings=warnings)
 
 
 def _read_shapefile(path: Path, config: Settings) -> ReadResult:
@@ -140,8 +194,7 @@ def read_uploaded_file(
 ) -> ReadResult:
     """Read KML layers or one zipped Shapefile into a two-dimensional frame."""
     if file_type == "kml":
-        frame = _read_kml(path)
-        return ReadResult(frame=frame, warnings=[])
+        return _read_kml(path)
     if file_type == "shapefile":
         return _read_shapefile(path, config)
     raise ValueError("Unsupported geospatial file type.")

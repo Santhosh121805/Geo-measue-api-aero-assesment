@@ -185,6 +185,7 @@ The geometry is also transformed to EPSG:4326 and measured on the WGS84 ellipsoi
 - Require `.shp`, `.shx`, and `.dbf`; report a missing `.prj` and validate coordinates before assuming WGS84.
 - Reproject Mercator-family sources before measuring area; do not apply that rule to Transverse Mercator/UTM sources.
 - Read all KML layers, discard Z coordinates, and fail empty or unreadable input as a persisted `FAILED` record.
+- Merge Google Earth `ExtendedData` and nested Folder names by Placemark order; skip the merge with a warning if the Placemark and feature counts differ.
 - Repair invalid geometries, retain unsupported and empty geometries without crashing, and handle points without inventing measurements.
 - Return `409` for measurements while processing, `422` for failed processing, and `404` for unknown IDs.
 

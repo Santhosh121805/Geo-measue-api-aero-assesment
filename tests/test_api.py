@@ -2,6 +2,7 @@
 
 from io import BytesIO
 import zipfile
+import xml.etree.ElementTree as ET
 
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -34,6 +35,77 @@ def test_upload_kml_returns_completed_feature_measurements(client: TestClient, k
     assert measurements.json()["features"][0]["measurements"]["area_m2"] > 0
     point = next(feature for feature in measurements.json()["features"] if feature["geometry_type"] == "Point")
     assert point["measurements"] is None
+
+
+def test_kml_extended_data_and_nested_folder_properties_are_preserved(
+    client: TestClient,
+) -> None:
+    namespace = "http://www.opengis.net/kml/2.2"
+    ET.register_namespace("", namespace)
+    root = ET.Element(f"{{{namespace}}}kml")
+    document = ET.SubElement(root, f"{{{namespace}}}Document")
+    outer = ET.SubElement(document, f"{{{namespace}}}Folder")
+    ET.SubElement(outer, f"{{{namespace}}}name").text = "Outer"
+    inner = ET.SubElement(outer, f"{{{namespace}}}Folder")
+    ET.SubElement(inner, f"{{{namespace}}}name").text = "Inner"
+    for name, parcel_id, owner in [("First", "P-1", "Asha"), ("Second", "P-2", "Ravi")]:
+        placemark = ET.SubElement(inner, f"{{{namespace}}}Placemark")
+        ET.SubElement(placemark, f"{{{namespace}}}name").text = name
+        extended_data = ET.SubElement(placemark, f"{{{namespace}}}ExtendedData")
+        data = ET.SubElement(extended_data, f"{{{namespace}}}Data", {"name": "parcel_id"})
+        ET.SubElement(data, f"{{{namespace}}}value").text = parcel_id
+        schema_data = ET.SubElement(extended_data, f"{{{namespace}}}SchemaData", {"schemaUrl": "#parcel"})
+        ET.SubElement(schema_data, f"{{{namespace}}}SimpleData", {"name": "owner"}).text = owner
+        polygon = ET.SubElement(placemark, f"{{{namespace}}}Polygon")
+        boundary = ET.SubElement(polygon, f"{{{namespace}}}outerBoundaryIs")
+        ring = ET.SubElement(boundary, f"{{{namespace}}}LinearRing")
+        ET.SubElement(ring, f"{{{namespace}}}coordinates").text = (
+            "77.590,12.970 77.591,12.970 77.591,12.971 "
+            "77.590,12.971 77.590,12.970"
+        )
+    contents = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+    response = _upload(client, "extended-data.kml", contents)
+    measurements = client.get(f"/api/files/{response.json()['id']}/measurements/").json()
+    features = measurements["features"]
+
+    assert [feature["properties"]["parcel_id"] for feature in features] == ["P-1", "P-2"]
+    assert [feature["properties"]["owner"] for feature in features] == ["Asha", "Ravi"]
+    assert [feature["properties"]["folder"] for feature in features] == ["Inner", "Inner"]
+
+
+def test_kml_metadata_count_mismatch_warns_and_skips_merge(client: TestClient) -> None:
+    namespace = "http://www.opengis.net/kml/2.2"
+    ET.register_namespace("", namespace)
+    root = ET.Element(f"{{{namespace}}}kml")
+    document = ET.SubElement(root, f"{{{namespace}}}Document")
+    placemark = ET.SubElement(document, f"{{{namespace}}}Placemark")
+    extended_data = ET.SubElement(placemark, f"{{{namespace}}}ExtendedData")
+    data = ET.SubElement(extended_data, f"{{{namespace}}}Data", {"name": "should_not_merge"})
+    ET.SubElement(data, f"{{{namespace}}}value").text = "value"
+    polygon = ET.SubElement(placemark, f"{{{namespace}}}Polygon")
+    boundary = ET.SubElement(polygon, f"{{{namespace}}}outerBoundaryIs")
+    ring = ET.SubElement(boundary, f"{{{namespace}}}LinearRing")
+    ET.SubElement(ring, f"{{{namespace}}}coordinates").text = (
+        "77.590,12.970 77.591,12.970 77.591,12.971 "
+        "77.590,12.971 77.590,12.970"
+    )
+    no_geometry = ET.SubElement(document, f"{{{namespace}}}Placemark")
+    extra_data = ET.SubElement(no_geometry, f"{{{namespace}}}ExtendedData")
+    extra = ET.SubElement(extra_data, f"{{{namespace}}}Data", {"name": "extra"})
+    ET.SubElement(extra, f"{{{namespace}}}value").text = "not a feature"
+
+    response = _upload(
+        client, "mismatched.kml", ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    )
+    detail = client.get(f"/api/files/{response.json()['id']}/measurements/").json()
+
+    assert len(detail["features"]) == 1
+    assert "should_not_merge" not in detail["features"][0]["properties"]
+    assert any(
+        "Placemark count does not match" in warning
+        for warning in detail["features"][0]["warnings"]
+    )
 
 
 def test_upload_shapefile_zip_completes(client: TestClient, shapefile_zip_bytes: bytes) -> None:
