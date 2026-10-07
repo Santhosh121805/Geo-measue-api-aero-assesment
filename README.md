@@ -29,10 +29,7 @@ python -m pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-The service listens at `http://127.0.0.1:8000`; Swagger UI is at `http://127.0.0.1:8000/docs`. By default, SQLite data lives in `data/geo_measure.db` and uploads are stored temporarily under `uploads/`. Set `DATABASE_URL` and `UPLOAD_DIR` to change these locations.
-
-Open http://127.0.0.1:8000/ for the homepage. Upload a file there and it opens in the map workspace (/app).
-
+The service listens at `http://127.0.0.1:8000`
 Docker:
 
 ```powershell
