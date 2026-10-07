@@ -189,11 +189,7 @@ flowchart LR
 
 `app/main.py` creates tables at startup. `routes/files.py` validates requests and schedules processing. `services/file_reader.py` reads each KML layer or safely extracts one Shapefile. `services/processor.py` owns the `PENDING -> PROCESSING -> COMPLETED/FAILED` lifecycle using its own session. The CRS and measurement services work on one feature at a time. SQLAlchemy stores upload status and JSON feature data.
 
-### Web UI
 
-Static HTML/CSS/vanilla JS is served by FastAPI `StaticFiles`; there is no build step. The page uploads the file, polls `GET /api/files/{id}/` every second until `COMPLETED` or `FAILED`, then loads `/measurements/` and draws features on a Leaflet map. Features whose coordinates are not longitude/latitude (projected source CRS) are listed but not drawn.
-
-The homepage at `/` explains the service and uploads files, polls their status, then redirects to `/app?file=<id>`. The workspace at `/app` reads the `?file=` parameter and opens that file directly; without it, the workspace shows the existing files list.
 
 ## CRS Strategy
 
