@@ -31,22 +31,20 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-| Open | What it is |
-|---|---|
-| http://127.0.0.1:8000/ | Web UI (upload a file here) |
-| http://127.0.0.1:8000/docs | Swagger API docs |
+The service listens at `http://127.0.0.1:8000`.
+Docker:
 
-**Run tests:** `pytest`
-
-**Docker:**
-```bash
+```powershell
 docker build -t geo-measure-api .
-docker run -p 8000:8000 geo-measure-api
+docker run --rm -p 8000:8000 -v geo-measure-data:/app/data geo-measure-api
 ```
 
-Sample files to try are in `sample_data/`.
+Run tests and regenerate example files:
 
----
+```powershell
+pytest
+python scripts/generate_samples.py
+```
 
 ## API
 
@@ -72,12 +70,12 @@ curl http://127.0.0.1:8000/api/files/{id}/
 ```
 ```json
 {
-  "id": "9f368b08-bcf9-4182-98b5-cd64e9c9ad95",
-  "filename": "sample.kml",
-  "feature_count": 3,
-  "crs": "EPSG:4326",
-  "projected_crs_used": "EPSG:32643",
-  "status": "COMPLETED"
+	"id": "9f368b08-bcf9-4182-98b5-cd64e9c9ad95",
+	"filename": "sample.kml",
+	"feature_count": 3,
+	"crs": "EPSG:4326",
+	"projected_crs_used": "EPSG:32643",
+	"status": "COMPLETED"
 }
 ```
 Status goes `PENDING → PROCESSING → COMPLETED` (or `FAILED` with an `error_message`).
@@ -88,29 +86,29 @@ curl http://127.0.0.1:8000/api/files/{id}/measurements/
 ```
 ```json
 {
-  "summary": {
-    "total_area_m2": 973365.15,
-    "total_area_hectares": 97.3365,
-    "total_length_m": 108.56,
-    "counts_per_geometry_type": { "Polygon": 1, "LineString": 1, "Point": 1 }
-  },
-  "features": [
-    {
-      "feature_id": 0,
-      "geometry_type": "Polygon",
-      "crs": "EPSG:4326",
-      "properties": { "Name": "Bangalore parcel" },
-      "geometry": { "type": "Polygon", "coordinates": [[[77.59, 12.97], [77.599, 12.97], "..."]] },
-      "measurements": {
-        "area_m2": 973365.15,
-        "area_hectares": 97.3365,
-        "area_acres": 240.5238,
-        "geodesic_area_m2": 972236.68,
-        "difference_percent": 0.1161
-      },
-      "warnings": []
-    }
-  ]
+	"summary": {
+		"total_area_m2": 973365.15,
+		"total_area_hectares": 97.3365,
+		"total_length_m": 108.56,
+		"counts_per_geometry_type": { "Polygon": 1, "LineString": 1, "Point": 1 }
+	},
+	"features": [
+		{
+			"feature_id": 0,
+			"geometry_type": "Polygon",
+			"crs": "EPSG:4326",
+			"properties": { "Name": "Bangalore parcel" },
+			"geometry": { "type": "Polygon", "coordinates": [[[77.59, 12.97], [77.599, 12.97], "..."]] },
+			"measurements": {
+				"area_m2": 973365.15,
+				"area_hectares": 97.3365,
+				"area_acres": 240.5238,
+				"geodesic_area_m2": 972236.68,
+				"difference_percent": 0.1161
+			},
+			"warnings": []
+		}
+	]
 }
 ```
 (Shortened. Lines return `length_m`, and points return `measurements: null`.)
@@ -126,11 +124,20 @@ All errors return JSON: `{ "detail": "message" }`
 | Measurements requested while still processing | `409` |
 | File could not be read (e.g. zip missing `.dbf`) | Status `FAILED` with a reason |
 
----
-
 ## Architecture
 
 ![Architecture](docs/architecture.png)
+
+```mermaid
+flowchart LR
+	Client --> Upload[Validate, hash, store upload]
+	Upload --> Queue[FastAPI BackgroundTask]
+	Queue --> Reader[Safe extraction and GeoPandas reader]
+	Reader --> CRS[Per-feature CRS selection]
+	CRS --> Measure[Repair, project, measure, geodesic check]
+	Measure --> ORM[SQLAlchemy file and feature records]
+	ORM --> API[Status and measurement endpoints]
+```
 
 ### Project structure
 ```
@@ -150,18 +157,13 @@ sample_data/             # Example KML and Shapefile
 ```
 
 ### CRS handling
-Map files usually store coordinates in **EPSG:4326 (latitude/longitude in degrees)**. Degrees are not a fixed distance: 1° of longitude is about 111 km at the equator and 0 km at the poles. So **measuring directly in degrees gives wrong results.**
+Coordinates in longitude and latitude are angles, not distances. A degree of longitude is about 111 km at the equator and approaches zero at the poles, so calculating planar area or length directly in degrees is wrong.
 
-My approach:
-- **Each shape is converted to the UTM zone at its centre** (EPSG:326xx north, 327xx south). UTM uses metres and is very accurate within its zone. Doing this *per shape* means a file covering several regions is still measured correctly.
-- **Very large shapes** (wider than one UTM zone) use a local equal-area projection instead.
-- **Files already in metres** (e.g. UTM) are measured directly.
-- **Web Mercator (EPSG:3857)** is reprojected first, because it inflates areas.
-- **Files with no CRS** are assumed to be EPSG:4326 only if the coordinates look like valid lat/long. A warning is added.
+For each geographic feature, the service selects the UTM zone containing that feature's centroid and uses EPSG:326xx in the north or EPSG:327xx in the south. That allows one file to span UTM zones without forcing every feature into a single projection. Features wider than six degrees use Lambert Azimuthal Equal Area centered on the feature; polar features also use a local LAEA projection. Already projected data stays in its source CRS, with axis-unit conversion when the CRS uses feet.
 
-**Accuracy check:** every result is also calculated on the WGS84 ellipsoid (`pyproj.Geod`). The difference is usually under 0.2%.
+Projected Mercator-family inputs such as Web Mercator (EPSG:3857) are an exception: their scale distortion grows with latitude, so the feature is transformed to WGS84 and measured in a per-feature UTM or LAEA CRS. The source is identified from its coordinate-operation method, while Transverse Mercator CRSs such as UTM remain unchanged. A warning records the CRS used for measurement.
 
----
+The geometry is also transformed to EPSG:4326 and measured on the WGS84 ellipsoid with `pyproj.Geod`. The percentage difference from the projected result is returned, and differences above 0.5% add a warning. Missing CRS metadata is assumed to be EPSG:4326 only when all coordinates pass longitude/latitude bounds checks.
 
 ## Design Decisions
 
@@ -199,9 +201,8 @@ My approach:
 
 ## Future Scope
 
-- **Change detection:** compare two surveys of the same site to find area gained or lost (e.g. encroachment)
-- **PostGIS** for spatial queries ("features within 1 km")
-- **Celery + Redis** workers for large files
-- **Volume calculation** from elevation data (DEM), useful for mining stockpiles
-- Support for GeoJSON and GeoPackage
-- Authentication and rate limiting
+- Compare surveys for change detection and encroachment analysis.
+- Move metadata and spatial features to PostGIS.
+- Run durable Celery/Redis workers and store uploads in S3-compatible object storage.
+- Add GeoJSON and GeoPackage input and DEM-based volume calculations.
+- Add authentication, quotas, and rate limiting.
