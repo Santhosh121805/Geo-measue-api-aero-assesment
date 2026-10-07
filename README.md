@@ -128,16 +128,7 @@ All errors return JSON: `{ "detail": "message" }`
 
 ![Architecture](docs/architecture.png)
 
-```mermaid
-flowchart LR
-	Client --> Upload[Validate, hash, store upload]
-	Upload --> Queue[FastAPI BackgroundTask]
-	Queue --> Reader[Safe extraction and GeoPandas reader]
-	Reader --> CRS[Per-feature CRS selection]
-	CRS --> Measure[Repair, project, measure, geodesic check]
-	Measure --> ORM[SQLAlchemy file and feature records]
-	ORM --> API[Status and measurement endpoints]
-```
+
 
 ### Project structure
 ```
