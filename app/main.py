@@ -34,9 +34,15 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", include_in_schema=False)
-def frontend() -> FileResponse:
-    """Serve the single-page web UI."""
-    return FileResponse(STATIC_DIR / "index.html")
+def homepage() -> FileResponse:
+    """Serve the landing page with the upload box."""
+    return FileResponse(STATIC_DIR / "home.html")
+
+
+@app.get("/app", include_in_schema=False)
+def workspace() -> FileResponse:
+    """Serve the map workspace (opens ?file=<id> directly)."""
+    return FileResponse(STATIC_DIR / "app.html")
 
 
 @app.exception_handler(RequestValidationError)

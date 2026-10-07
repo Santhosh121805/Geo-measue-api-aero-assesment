@@ -424,3 +424,10 @@ $("help-btn").addEventListener("click", () => {
 
 document.querySelector(".app").classList.add("no-details");
 loadFiles();
+
+// Coming from the homepage: /app?file=<id> opens that file straight away.
+const fileFromUrl = new URLSearchParams(window.location.search).get("file");
+if (fileFromUrl) {
+  $("welcome").hidden = true;
+  loadFile(fileFromUrl).catch((e) => showError("Couldn't open file", e.message));
+}

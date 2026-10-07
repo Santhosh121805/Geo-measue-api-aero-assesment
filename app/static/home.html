@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geo Measure</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/home.css">
+</head>
+<body class="home">
+  <header class="home-nav">
+    <a class="brand" href="/">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 17 9 5l4 8 3-5 5 9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+      <span>Geo Measure</span>
+    </a>
+    <nav class="top-links">
+      <a href="/app">Open workspace</a>
+      <a href="/docs" target="_blank" rel="noopener">API docs</a>
+    </nav>
+  </header>
+
+  <!-- Hero: explanation on the left, upload on the right -->
+  <section class="hero">
+    <svg class="contours" viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g fill="none" stroke="currentColor" stroke-width="1.2">
+        <ellipse cx="230" cy="330" rx="60" ry="38" transform="rotate(-18 230 330)"/>
+        <ellipse cx="230" cy="330" rx="110" ry="72" transform="rotate(-14 230 330)"/>
+        <ellipse cx="236" cy="326" rx="165" ry="110" transform="rotate(-10 236 326)"/>
+        <ellipse cx="244" cy="322" rx="225" ry="150" transform="rotate(-6 244 322)"/>
+        <ellipse cx="252" cy="318" rx="290" ry="196" transform="rotate(-3 252 318)"/>
+        <ellipse cx="262" cy="312" rx="360" ry="246" transform="rotate(0 262 312)"/>
+        <ellipse cx="640" cy="120" rx="50" ry="30" transform="rotate(22 640 120)"/>
+        <ellipse cx="640" cy="120" rx="96" ry="60" transform="rotate(18 640 120)"/>
+        <ellipse cx="646" cy="124" rx="148" ry="96" transform="rotate(14 646 124)"/>
+      </g>
+    </svg>
+
+    <div class="hero-inner">
+      <div class="hero-copy">
+        <h1>Measure every boundary, road and point in your survey file.</h1>
+        <p class="lead">Upload a KML or Shapefile from Google Earth, QGIS or a drone survey. You get the area of every plot and the length of every line, in metres, hectares and acres.</p>
+        <ul class="facts">
+          <li>
+            <b>Real-world accuracy</b>
+            <span>Shapes are converted from GPS degrees to a metre grid before measuring, then checked against the curved Earth.</span>
+          </li>
+          <li>
+            <b>Messy files welcome</b>
+            <span>Self-crossing boundaries are repaired and flagged. Bad files get a clear reason, not a crash.</span>
+          </li>
+          <li>
+            <b>See it on a map</b>
+            <span>Every shape is drawn on satellite imagery with its measurement written on it.</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="upload-card">
+        <h2>Start measuring</h2>
+        <p class="muted">Your file opens in the workspace as soon as it's measured.</p>
+
+        <label id="home-dropzone" class="dropzone big" for="home-file">
+          <input id="home-file" type="file" accept=".kml,.zip">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-5 5m5-5 5 5M4 20h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <strong>Drop your file here</strong>
+          <span>or click to choose a file</span>
+        </label>
+
+        <div id="home-progress" class="progress" hidden>
+          <div class="progress-steps">
+            <span data-step="upload">Uploading</span>
+            <span data-step="process">Measuring</span>
+            <span data-step="done">Opening</span>
+          </div>
+          <p id="home-progress-text"></p>
+        </div>
+
+        <div id="home-error" class="error-box" role="alert" hidden></div>
+
+        <div class="formats">
+          <div><b>.kml</b><span>Google Earth, Google My Maps</span></div>
+          <div><b>.zip</b><span>Shapefile: .shp, .shx, .dbf and .prj zipped together</span></div>
+        </div>
+
+        <a class="secondary-link" href="/app">Or open your previous files</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works: a real sequence, so it is numbered -->
+  <section class="how">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>
+        <span class="step-num">1</span>
+        <b>Upload</b>
+        <p>Drop a .kml file or a zipped Shapefile. We check it's safe and readable.</p>
+      </li>
+      <li>
+        <span class="step-num">2</span>
+        <b>Convert</b>
+        <p>Each shape is moved from GPS degrees onto the local UTM grid, where distances are in metres.</p>
+      </li>
+      <li>
+        <span class="step-num">3</span>
+        <b>Measure and verify</b>
+        <p>Areas and lengths are calculated, then compared with a curved-Earth calculation.</p>
+      </li>
+      <li>
+        <span class="step-num">4</span>
+        <b>Explore</b>
+        <p>See every shape on the map, with totals, attributes and any warnings.</p>
+      </li>
+    </ol>
+  </section>
+
+  <footer class="home-footer">
+    <span>Geo Measure · FastAPI, GeoPandas, Shapely and pyproj</span>
+    <a href="/docs" target="_blank" rel="noopener">API documentation</a>
+  </footer>
+
+  <script src="/static/home.js"></script>
+</body>
+</html>

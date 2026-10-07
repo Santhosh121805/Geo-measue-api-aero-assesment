@@ -53,6 +53,7 @@ button { font: inherit; cursor: pointer; }
   background: var(--ink);
   color: #fff;
 }
+.brand { color: inherit; text-decoration: none; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: .01em; }
 .brand-mark { width: 24px; height: 24px; color: var(--hivis); }
 .top-links { display: flex; gap: 18px; align-items: center; }
