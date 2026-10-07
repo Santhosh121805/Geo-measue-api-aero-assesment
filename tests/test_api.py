@@ -32,6 +32,7 @@ def test_upload_kml_returns_completed_feature_measurements(client: TestClient, k
     assert measurements.json()["summary"]["counts_per_geometry_type"] == {
         "Polygon": 1, "LineString": 1, "Point": 1
     }
+    assert [feature["feature_id"] for feature in measurements.json()["features"]] == [0, 1, 2]
     assert measurements.json()["features"][0]["measurements"]["area_m2"] > 0
     point = next(feature for feature in measurements.json()["features"] if feature["geometry_type"] == "Point")
     assert point["measurements"] is None
@@ -72,6 +73,7 @@ def test_kml_extended_data_and_nested_folder_properties_are_preserved(
     assert [feature["properties"]["parcel_id"] for feature in features] == ["P-1", "P-2"]
     assert [feature["properties"]["owner"] for feature in features] == ["Asha", "Ravi"]
     assert [feature["properties"]["folder"] for feature in features] == ["Inner", "Inner"]
+    assert [feature["feature_id"] for feature in features] == [0, 1]
 
 
 def test_kml_metadata_count_mismatch_warns_and_skips_merge(client: TestClient) -> None:

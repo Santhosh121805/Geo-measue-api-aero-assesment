@@ -8,9 +8,20 @@ Highlights: upload hashing and deduplication, background processing, safe ZIP ex
 
 Use Python 3.11 or newer locally. The container uses Python 3.12.
 
+### Windows (PowerShell)
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+### Linux/macOS (bash)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
@@ -46,7 +57,7 @@ curl -F "file=@sample_data/sample.kml" http://localhost:8000/api/files/
 Example upload response:
 
 ```json
-{"id":"104e8c74-b13d-4290-88f3-948dd1ea2208","status":"PENDING","duplicate":false}
+{"id":"c42db5f1-41f8-4e0b-b1ab-442beffabcad","status":"PENDING","duplicate":false}
 ```
 
 Uploading the same bytes again returns HTTP `200`, the original `id`, and `"duplicate": true`.
@@ -54,12 +65,12 @@ Uploading the same bytes again returns HTTP `200`, the original `id`, and `"dupl
 ### `GET /api/files/{id}/`
 
 ```bash
-curl http://localhost:8000/api/files/104e8c74-b13d-4290-88f3-948dd1ea2208/
+curl http://localhost:8000/api/files/c42db5f1-41f8-4e0b-b1ab-442beffabcad/
 ```
 
 ```json
 {
-	"id": "104e8c74-b13d-4290-88f3-948dd1ea2208",
+	"id": "c42db5f1-41f8-4e0b-b1ab-442beffabcad",
 	"filename": "sample.kml",
 	"file_type": "kml",
 	"feature_count": 3,
@@ -67,24 +78,25 @@ curl http://localhost:8000/api/files/104e8c74-b13d-4290-88f3-948dd1ea2208/
 	"projected_crs_used": "EPSG:32643",
 	"status": "COMPLETED",
 	"error_message": null,
-	"created_at": "2026-10-07T11:31:13",
-	"completed_at": "2026-10-07T11:31:13.998557"
+	"created_at": "2026-10-07T11:55:43",
+	"completed_at": "2026-10-07T11:55:43.889821"
 }
 ```
 
 ### `GET /api/files/{id}/measurements/`
 
 Use `?geometry_type=Polygon` to filter the feature list and summary counts.
+Each returned `feature_id` is the zero-based feature index within that upload, not a database identifier.
 
 ```bash
-curl "http://localhost:8000/api/files/104e8c74-b13d-4290-88f3-948dd1ea2208/measurements/"
+curl "http://localhost:8000/api/files/c42db5f1-41f8-4e0b-b1ab-442beffabcad/measurements/"
 ```
 
 Real sample summary and polygon feature excerpt:
 
 ```json
 {
-	"file_id": "104e8c74-b13d-4290-88f3-948dd1ea2208",
+	"file_id": "c42db5f1-41f8-4e0b-b1ab-442beffabcad",
 	"filename": "sample.kml",
 	"crs": "EPSG:4326",
 	"projected_crs_used": "EPSG:32643",
@@ -100,7 +112,7 @@ Real sample summary and polygon feature excerpt:
 	},
 	"features": [
 		{
-			"feature_id": 1,
+			"feature_id": 0,
 			"geometry_type": "Polygon",
 			"crs": "EPSG:4326",
 			"properties": {"Name": "Bangalore parcel", "Description": ""},
@@ -142,7 +154,23 @@ curl http://localhost:8000/health
 {"status":"ok"}
 ```
 
-For the zipped sample, upload with `curl -F "file=@sample_data/sample_shapefile.zip" http://localhost:8000/api/files/`; it completes with one polygon feature and an area of `973365.15` square meters.
+The zipped sample was also rerun against the live server:
+
+```bash
+curl -F "file=@sample_data/sample_shapefile.zip" http://localhost:8000/api/files/
+```
+
+```json
+{"id":"7649305e-7fb1-43c6-bf61-012ccdc4d5ec","status":"PENDING","duplicate":false}
+```
+
+After polling `GET /api/files/7649305e-7fb1-43c6-bf61-012ccdc4d5ec/`, it completed with one polygon in EPSG:4326, measured in EPSG:32643:
+
+```json
+{"id":"7649305e-7fb1-43c6-bf61-012ccdc4d5ec","filename":"sample_shapefile.zip","file_type":"shapefile","feature_count":1,"crs":"EPSG:4326","projected_crs_used":"EPSG:32643","status":"COMPLETED","error_message":null,"created_at":"2026-10-07T11:55:43","completed_at":"2026-10-07T11:55:43.998220"}
+```
+
+Its measurement response uses `feature_id: 0` and reports `973365.15` square meters (`97.3365` hectares, `240.5238` acres); the geodesic area is `972236.68` square meters, a `0.1161%` difference.
 
 ## Architecture
 
@@ -184,14 +212,14 @@ The geometry is also transformed to EPSG:4326 and measured on the WGS84 ellipsoi
 - Reject unsupported extensions, empty uploads, corrupt ZIPs, excessive upload sizes, zip-slip paths, symbolic links, duplicate archive paths, oversized extraction totals, too many archive entries, and ambiguous multiple Shapefiles.
 - Require `.shp`, `.shx`, and `.dbf`; report a missing `.prj` and validate coordinates before assuming WGS84.
 - Reproject Mercator-family sources before measuring area; do not apply that rule to Transverse Mercator/UTM sources.
-- Read all KML layers, discard Z coordinates, and fail empty or unreadable input as a persisted `FAILED` record.
+- Read all KML layers, discard Z coordinates, preserve ExtendedData and nested Folder names, and warn instead of misassigning metadata if Placemark counts differ.
 - Merge Google Earth `ExtendedData` and nested Folder names by Placemark order; skip the merge with a warning if the Placemark and feature counts differ.
 - Repair invalid geometries, retain unsupported and empty geometries without crashing, and handle points without inventing measurements.
 - Return `409` for measurements while processing, `422` for failed processing, and `404` for unknown IDs.
 
 ## Testing
 
-The test suite programmatically generates KML and Shapefile data and uses a temporary SQLite database. It covers one-square-kilometer accuracy, known line length, points, self-intersection repair, multiple UTM zones, southern UTM, projected feet, missing CRS, wide-feature LAEA, API uploads, deduplication, pagination, status gates, and invalid/unsafe archives.
+The test suite programmatically generates KML and Shapefile data and uses a temporary SQLite database. It covers one-square-kilometer accuracy, known line length, points, self-intersection repair, multiple UTM zones, southern UTM, projected feet, Web Mercator distortion, missing CRS, wide-feature LAEA, KML ExtendedData and folder metadata, zero-based feature IDs, API uploads, deduplication, pagination, status gates, and invalid/unsafe archives.
 
 Run it with `pytest`.
 

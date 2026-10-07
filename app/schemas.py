@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UploadResponse(BaseModel):
@@ -47,7 +47,7 @@ class Measurements(BaseModel):
 class FeatureResponse(BaseModel):
     """Feature geometry, properties, and quality information."""
 
-    feature_id: int
+    feature_id: int = Field(description="Zero-based feature index within the uploaded file.")
     geometry_type: str
     crs: str | None
     properties: dict[str, Any]

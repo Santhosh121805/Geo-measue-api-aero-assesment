@@ -164,7 +164,7 @@ def get_file_measurements(
     )
     serialized_features = [
         FeatureResponse(
-            feature_id=feature.id,
+            feature_id=feature.feature_index,
             geometry_type=feature.geometry_type,
             crs=record.crs or "EPSG:4326",
             properties=feature.properties,
