@@ -28,6 +28,8 @@ uvicorn app.main:app --reload
 
 The service listens at `http://127.0.0.1:8000`; Swagger UI is at `http://127.0.0.1:8000/docs`. By default, SQLite data lives in `data/geo_measure.db` and uploads are stored temporarily under `uploads/`. Set `DATABASE_URL` and `UPLOAD_DIR` to change these locations.
 
+Open http://127.0.0.1:8000/ for the web UI (drag-and-drop upload, map preview with Leaflet, measurement table, upload history).
+
 Docker:
 
 ```powershell
@@ -186,6 +188,10 @@ flowchart LR
 ```
 
 `app/main.py` creates tables at startup. `routes/files.py` validates requests and schedules processing. `services/file_reader.py` reads each KML layer or safely extracts one Shapefile. `services/processor.py` owns the `PENDING -> PROCESSING -> COMPLETED/FAILED` lifecycle using its own session. The CRS and measurement services work on one feature at a time. SQLAlchemy stores upload status and JSON feature data.
+
+### Web UI
+
+Static HTML/CSS/vanilla JS is served by FastAPI `StaticFiles`; there is no build step. The page uploads the file, polls `GET /api/files/{id}/` every second until `COMPLETED` or `FAILED`, then loads `/measurements/` and draws features on a Leaflet map. Features whose coordinates are not longitude/latitude (projected source CRS) are listed but not drawn.
 
 ## CRS Strategy
 

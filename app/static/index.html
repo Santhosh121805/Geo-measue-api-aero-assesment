@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geo Measure</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Geo Measure</h1>
+    <p>Upload a <b>.kml</b> file or a <b>.zip</b> Shapefile to measure every feature in it.</p>
+  </header>
+
+  <main>
+    <!-- 1. Upload -->
+    <section class="card">
+      <label id="dropzone" for="file-input">
+        <input id="file-input" type="file" accept=".kml,.zip" hidden>
+        <span id="dropzone-text">Drop a file here or <u>browse</u></span>
+      </label>
+      <p id="message" class="message" hidden></p>
+    </section>
+
+    <!-- 2. Result (hidden until a file is processed) -->
+    <section id="result" hidden>
+      <div class="card file-info">
+        <div><span class="label">File</span><span id="info-filename"></span></div>
+        <div><span class="label">Status</span><span id="info-status" class="badge"></span></div>
+        <div><span class="label">Source CRS</span><span id="info-crs"></span></div>
+        <div><span class="label">Measured in</span><span id="info-projected"></span></div>
+      </div>
+
+      <div class="stats">
+        <div class="card stat"><span class="label">Features</span><b id="stat-features">–</b></div>
+        <div class="card stat"><span class="label">Total area</span><b id="stat-area">–</b><small id="stat-area-sub"></small></div>
+        <div class="card stat"><span class="label">Total length</span><b id="stat-length">–</b><small id="stat-length-sub"></small></div>
+        <div class="card stat"><span class="label">Repaired / unsupported</span><b id="stat-issues">–</b></div>
+      </div>
+
+      <div class="card">
+        <div id="map"></div>
+        <p id="map-note" class="note" hidden></p>
+      </div>
+
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Name</th><th>Type</th><th>Area</th><th>Length</th>
+              <th title="Difference between UTM and geodesic (curved Earth) result">Accuracy check</th>
+              <th>Warnings</th>
+            </tr>
+          </thead>
+          <tbody id="feature-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. Previous uploads -->
+    <section class="card">
+      <h2>Recent uploads</h2>
+      <ul id="history"></ul>
+    </section>
+  </main>
+
+  <footer><a href="/docs">API docs</a></footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
