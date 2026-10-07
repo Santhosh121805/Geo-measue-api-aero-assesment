@@ -1,219 +1,411 @@
-// Simple frontend for the Geo Measure API.
-// Flow: upload file -> poll status until COMPLETED/FAILED -> show measurements.
+// Geo Measure web UI.
+// Flow: upload file -> poll status until COMPLETED/FAILED -> show shapes on the map + measurements.
 
 const API = "/api/files/";
+const FOOTBALL_PITCH_M2 = 7140; // standard 105 m x 68 m pitch, used to make areas easy to picture
+const WALK_M_PER_MIN = 83;      // about 5 km/h, used to make lengths easy to picture
 
-// ---------- small helpers ----------
 const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const shapes = (n) => `${n} ${n === 1 ? "shape" : "shapes"}`;
 
-function fmt(value, digits = 2) {
-  return value == null ? "–" : Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
+let currentFileId = null;
+let selectedId = null;
+const layersById = {};
+
+// ---------- formatting ----------
+function num(value, digits = 2) {
+  return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
-function showMessage(text, isError = false) {
-  const box = $("message");
-  box.textContent = text;
-  box.className = "message" + (isError ? " error" : "");
-  box.hidden = !text;
+// Small areas read better in m², large ones in hectares.
+function formatArea(m2) {
+  if (m2 == null) return "–";
+  return m2 < 10000 ? `${num(m2, 0)} m²` : `${num(m2 / 10000, 2)} ha`;
 }
 
+function formatLength(m) {
+  if (m == null) return "–";
+  return m < 1000 ? `${num(m, 0)} m` : `${num(m / 1000, 2)} km`;
+}
+
+function areaHint(m2) {
+  const pitches = m2 / FOOTBALL_PITCH_M2;
+  const acres = `${num(m2 / 4046.8564224, 2)} acres`;
+  if (pitches < 0.5) return `${acres} · smaller than a football pitch`;
+  return `${acres} · about ${num(pitches, pitches < 10 ? 1 : 0)} football pitches`;
+}
+
+function lengthHint(m) {
+  const minutes = m / WALK_M_PER_MIN;
+  if (minutes < 1) return "less than a minute's walk";
+  if (minutes < 120) return `about a ${num(minutes, 0)}-minute walk`;
+  return `about ${num(minutes / 60, 1)} hours on foot`;
+}
+
+function shapeKind(type) {
+  if (type.includes("Polygon")) return "polygon";
+  if (type.includes("LineString")) return "line";
+  if (type.includes("Point")) return "point";
+  return "other";
+}
+
+const KIND_LABEL = {
+  polygon: "Area (polygon)",
+  line: "Line",
+  point: "Location marker",
+  other: "Unsupported shape",
+};
+
+function featureName(feature) {
+  const p = feature.properties || {};
+  return p.Name || p.name || p.NAME || `Shape ${feature.feature_id + 1}`;
+}
+
+// Extra attributes worth showing (skip empty values and the name we already show).
+function extraProps(feature) {
+  const skip = new Set(["Name", "name", "NAME", "Description", "description"]);
+  return Object.entries(feature.properties || {})
+    .filter(([key, value]) => !skip.has(key) && value !== null && value !== "")
+    .slice(0, 4);
+}
+
+// ---------- API ----------
 async function getJson(url, options) {
   const response = await fetch(url, options);
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    // Our API always sends errors as {"detail": "..."}
-    throw new Error(body.detail || `Request failed (${response.status})`);
-  }
+  if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
   return body;
 }
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Turn API error text into something a non-technical user can act on.
+function friendlyError(message) {
+  const m = message.toLowerCase();
+  if (m.includes("only .kml and .zip")) return "This file type isn't supported. Upload a .kml file, or a .zip that contains a Shapefile (.shp, .shx, .dbf, .prj).";
+  if (m.includes("empty")) return "The file is empty. Export it again from your mapping tool and retry.";
+  if (m.includes("missing required component")) return `${message} A Shapefile is several files; zip all of them together.`;
+  if (m.includes("does not contain a .shp")) return "The zip has no Shapefile inside. Zip the .shp, .shx, .dbf and .prj files together.";
+  return message;
+}
 
 // ---------- map ----------
-const map = L.map("map").setView([20.5, 78.9], 4); // India
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: "© OpenStreetMap",
-}).addTo(map);
-let shapesLayer = L.featureGroup().addTo(map);
-const layersById = {};
+const map = L.map("map", { zoomControl: false }).setView([20.5, 78.9], 5);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+L.control.scale({ position: "bottomleft", imperial: false }).addTo(map);
 
-// Geometries are returned in the file's own CRS. Leaflet needs lon/lat,
-// so we only draw them when the coordinates look like lon/lat.
+const basemaps = {
+  satellite: L.tileLayer(
+    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    { maxZoom: 19, attribution: "Imagery © Esri" }
+  ),
+  streets: L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap",
+  }),
+};
+basemaps.satellite.addTo(map);
+
+document.querySelectorAll("[data-basemap]").forEach((button) => {
+  button.addEventListener("click", () => {
+    Object.values(basemaps).forEach((layer) => map.removeLayer(layer));
+    basemaps[button.dataset.basemap].addTo(map);
+    document.querySelectorAll("[data-basemap]").forEach((b) => b.classList.toggle("active", b === button));
+  });
+});
+
+const shapesLayer = L.featureGroup().addTo(map);
+
+const STYLE = {
+  polygon: { color: "#2f80c9", weight: 2, fillColor: "#2f80c9", fillOpacity: 0.25 },
+  line: { color: "#f2b31d", weight: 4 },
+  selected: { color: "#f26b1d", weight: 4, fillColor: "#f26b1d", fillOpacity: 0.3 },
+};
+
+// The API returns geometry in the file's own CRS. Leaflet needs lon/lat,
+// so shapes from projected files (e.g. metres) are listed but not drawn.
 function looksLikeLonLat(geometry) {
-  const text = JSON.stringify(geometry.coordinates);
-  const numbers = text.match(/-?\d+(\.\d+)?/g) || [];
+  const numbers = JSON.stringify(geometry.coordinates).match(/-?\d+(\.\d+)?(e-?\d+)?/gi) || [];
   return numbers.every((n) => Math.abs(Number(n)) <= 180);
 }
 
+function labelFor(feature) {
+  const m = feature.measurements;
+  if (!m) return null;
+  if (m.area_m2 != null) return formatArea(m.area_m2);
+  if (m.length_m != null) return formatLength(m.length_m);
+  return null;
+}
+
 function drawFeatures(features) {
-  // The map was created while its section was hidden, so tell Leaflet
-  // to re-measure its size now that it is visible.
-  map.invalidateSize();
+  map.invalidateSize(); // panel sizes may have changed
   shapesLayer.clearLayers();
+  Object.keys(layersById).forEach((k) => delete layersById[k]);
   let skipped = 0;
 
   for (const feature of features) {
     if (!feature.geometry || !looksLikeLonLat(feature.geometry)) {
-      skipped++;
+      if (feature.geometry) skipped++;
       continue;
     }
+    const kind = shapeKind(feature.geometry_type);
     const layer = L.geoJSON(feature.geometry, {
-      style: { color: "#1f7a5a", weight: 2, fillOpacity: 0.25 },
-      pointToLayer: (_, latlng) => L.circleMarker(latlng, { radius: 6, color: "#1f7a5a" }),
+      // Points get their own style in pointToLayer, so don't override it here.
+      style: kind === "point" ? undefined : STYLE[kind] || STYLE.polygon,
+      pointToLayer: (_, latlng) =>
+        L.circleMarker(latlng, { radius: 7, color: "#fff", weight: 3, fillColor: "#f26b1d", fillOpacity: 1 }),
     });
-    layer.bindPopup(popupHtml(feature));
-    layer.on("click", () => highlightRow(feature.feature_id));
+    const label = labelFor(feature);
+    if (label) {
+      layer.bindTooltip(label, { permanent: true, direction: "center", className: "measure-label" });
+    } else {
+      layer.bindTooltip(featureName(feature), { direction: "top", className: "measure-label" });
+    }
+    layer.on("click", () => selectFeature(feature.feature_id, { pan: false }));
     layer.addTo(shapesLayer);
-    layersById[feature.feature_id] = layer;
+    layersById[feature.feature_id] = { layer, kind };
   }
 
   if (shapesLayer.getLayers().length) {
-    map.fitBounds(shapesLayer.getBounds(), { padding: [30, 30], maxZoom: 17 });
+    map.fitBounds(shapesLayer.getBounds(), { padding: [50, 50], maxZoom: 17 });
   }
-  $("map-note").hidden = skipped === 0;
-  $("map-note").textContent =
-    `${skipped} feature(s) not drawn: their coordinates are not in longitude/latitude (projected CRS).`;
+  const note = $("map-note");
+  note.hidden = skipped === 0;
+  note.textContent = `${skipped} shape(s) aren't shown on the map because this file uses a projected coordinate system. Their measurements are still listed on the right.`;
 }
 
-function popupHtml(feature) {
-  const m = feature.measurements || {};
-  const lines = [`<b>${featureName(feature)}</b>`, feature.geometry_type];
-  if (m.area_m2 != null) lines.push(`Area: ${fmt(m.area_m2)} m² (${fmt(m.area_hectares, 4)} ha)`);
-  if (m.length_m != null) lines.push(`Length: ${fmt(m.length_m)} m`);
-  return lines.join("<br>");
+function selectFeature(featureId, { pan = true } = {}) {
+  // reset previous selection
+  if (selectedId != null && layersById[selectedId]) {
+    const prev = layersById[selectedId];
+    if (prev.kind !== "point") prev.layer.setStyle(STYLE[prev.kind]);
+    prev.layer.eachLayer((l) => l.getTooltip()?.getElement()?.classList.remove("selected"));
+  }
+  document.querySelectorAll(".feature.selected").forEach((el) => el.classList.remove("selected"));
+
+  selectedId = featureId;
+  const card = document.querySelector(`.feature[data-id="${featureId}"]`);
+  card?.classList.add("selected");
+  card?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+  const entry = layersById[featureId];
+  if (!entry) return;
+  if (entry.kind !== "point") entry.layer.setStyle(STYLE.selected);
+  entry.layer.eachLayer((l) => l.getTooltip()?.getElement()?.classList.add("selected"));
+  if (pan) map.fitBounds(entry.layer.getBounds(), { padding: [80, 80], maxZoom: 17 });
 }
 
-// ---------- results ----------
-function featureName(feature) {
-  const p = feature.properties || {};
-  return p.Name || p.name || p.NAME || `Feature ${feature.feature_id}`;
-}
+// ---------- right panel ----------
+function showDetails(info, data) {
+  document.querySelector(".app").classList.remove("no-details");
+  $("details").hidden = false;
+  $("welcome").hidden = true;
 
-function showFileInfo(info) {
-  $("result").hidden = false;
-  $("info-filename").textContent = info.filename;
-  $("info-status").textContent = info.status;
-  $("info-status").className = "badge " + info.status;
-  $("info-crs").textContent = info.crs || "–";
-  $("info-projected").textContent = info.projected_crs_used || "–";
-}
+  $("d-filename").textContent = info.filename;
+  $("d-meta").textContent = `${shapes(info.feature_count)} · ${info.file_type === "kml" ? "KML file" : "Shapefile"}`;
+  $("d-status").textContent = info.status === "COMPLETED" ? "Measured" : info.status;
+  $("d-status").className = `status ${info.status}`;
 
-function showMeasurements(data) {
   const s = data.summary;
-  $("stat-features").textContent = data.features.length;
-  $("stat-area").textContent = `${fmt(s.total_area_hectares, 2)} ha`;
-  $("stat-area-sub").textContent = `${fmt(s.total_area_m2)} m² · ${fmt(s.total_area_acres, 2)} acres`;
-  $("stat-length").textContent = `${fmt(s.total_length_km, 3)} km`;
-  $("stat-length-sub").textContent = `${fmt(s.total_length_m)} m`;
-  $("stat-issues").textContent = `${s.repaired_feature_count} / ${s.unsupported_feature_count}`;
+  $("t-area").textContent = s.total_area_m2 ? formatArea(s.total_area_m2) : "–";
+  $("t-area-sub").textContent = s.total_area_m2 ? `${num(s.total_area_m2, 0)} m² · ${num(s.total_area_acres, 2)} acres` : "No areas in this file";
+  $("t-length").textContent = s.total_length_m ? formatLength(s.total_length_m) : "–";
+  $("t-length-sub").textContent = s.total_length_m ? `${num(s.total_length_m, 0)} m` : "No lines in this file";
 
-  $("feature-rows").innerHTML = "";
-  for (const feature of data.features) {
-    const m = feature.measurements || {};
-    const row = document.createElement("tr");
-    row.id = `row-${feature.feature_id}`;
-    row.innerHTML = `
-      <td>${feature.feature_id}</td>
-      <td></td>
-      <td>${feature.geometry_type}</td>
-      <td>${m.area_m2 != null ? `${fmt(m.area_m2)} m²<br><small>${fmt(m.area_hectares, 4)} ha</small>` : "–"}</td>
-      <td>${m.length_m != null ? `${fmt(m.length_m)} m<br><small>${fmt(m.length_km, 3)} km</small>` : "–"}</td>
-      <td>${m.difference_percent != null ? `${fmt(m.difference_percent, 3)}%` : "–"}</td>
-      <td class="warn"></td>`;
-    // textContent (not innerHTML) for values that come from the uploaded file
-    row.children[1].textContent = featureName(feature);
-    row.children[6].textContent = feature.warnings.join(" · ");
-    row.addEventListener("click", () => zoomTo(feature.feature_id));
-    $("feature-rows").appendChild(row);
-  }
+  const chips = Object.entries(s.counts_per_geometry_type).map(
+    ([type, count]) => `<span class="chip">${count} ${type}</span>`
+  );
+  if (s.repaired_feature_count) chips.push(`<span class="chip warn">${s.repaired_feature_count} repaired</span>`);
+  if (s.unsupported_feature_count) chips.push(`<span class="chip warn">${s.unsupported_feature_count} not measurable</span>`);
+  $("d-counts").innerHTML = chips.join("");
+
+  $("crs-source").textContent = info.crs === "EPSG:4326" ? "GPS latitude/longitude (EPSG:4326)" : info.crs || "an unknown system";
+  $("crs-projected").textContent = info.projected_crs_used || "a local metric grid";
+
+  const list = $("feature-list");
+  list.innerHTML = "";
+  for (const feature of data.features) list.appendChild(featureCard(feature));
 
   drawFeatures(data.features);
 }
 
-function highlightRow(featureId) {
-  document.querySelectorAll("tr.selected").forEach((r) => r.classList.remove("selected"));
-  $(`row-${featureId}`)?.classList.add("selected");
+function featureCard(feature) {
+  const kind = feature.is_supported ? shapeKind(feature.geometry_type) : "other";
+  const m = feature.measurements;
+  const li = document.createElement("li");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "feature";
+  button.dataset.id = feature.feature_id;
+
+  let value = "";
+  let hint = "";
+  if (m?.area_m2 != null) {
+    value = formatArea(m.area_m2);
+    hint = areaHint(m.area_m2);
+  } else if (m?.length_m != null) {
+    value = formatLength(m.length_m);
+    hint = lengthHint(m.length_m);
+  } else if (kind === "point") {
+    hint = "A single location. Points have no area or length.";
+  } else {
+    hint = "This shape type can't be measured.";
+  }
+
+  let accuracy = "";
+  if (m?.difference_percent != null) {
+    const ok = m.difference_percent <= 0.5;
+    accuracy = `<div class="f-accuracy ${ok ? "" : "warn"}">${ok ? "✓ Verified" : "Check"}: ${num(m.difference_percent, 2)}% difference from the curved-Earth calculation</div>`;
+  }
+
+  button.innerHTML = `
+    <span class="swatch ${kind}"></span>
+    <div class="f-body">
+      <div class="f-name"></div>
+      <div class="f-type">${KIND_LABEL[kind]}</div>
+      ${value ? `<div class="f-value">${value}</div>` : ""}
+      <div class="f-hint">${hint}</div>
+      ${accuracy}
+      <div class="f-props"></div>
+      <ul class="f-warnings"></ul>
+    </div>`;
+
+  // Values from the uploaded file are inserted as text, never as HTML.
+  button.querySelector(".f-name").textContent = featureName(feature);
+  button.querySelector(".f-props").textContent = extraProps(feature)
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("  ·  ");
+  for (const warning of feature.warnings) {
+    const item = document.createElement("li");
+    item.textContent = `⚠ ${warning}`;
+    button.querySelector(".f-warnings").appendChild(item);
+  }
+
+  button.addEventListener("click", () => selectFeature(feature.feature_id));
+  li.appendChild(button);
+  return li;
 }
 
-function zoomTo(featureId) {
-  highlightRow(featureId);
-  const layer = layersById[featureId];
-  if (!layer) return;
-  map.fitBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 17 });
-  layer.openPopup();
+// ---------- upload progress + errors ----------
+function setProgress(step, text) {
+  const order = ["upload", "process", "done"];
+  $("progress").hidden = step == null;
+  if (step == null) return;
+  document.querySelectorAll(".progress-steps span").forEach((el) => {
+    const i = order.indexOf(el.dataset.step);
+    const current = order.indexOf(step);
+    el.classList.toggle("complete", i < current || step === "done");
+    el.classList.toggle("active", i === current && step !== "done");
+  });
+  $("progress-text").textContent = text || "";
+}
+
+function showError(title, message) {
+  const box = $("error");
+  box.hidden = !title;
+  box.innerHTML = "";
+  if (!title) return;
+  const b = document.createElement("b");
+  b.textContent = title;
+  box.append(b, document.createTextNode(friendlyError(message)));
 }
 
 // ---------- main flow ----------
 async function loadFile(fileId) {
-  // Poll until processing finishes (background task on the server).
+  currentFileId = fileId;
+  selectedId = null;
+  showError(null);
+  highlightActiveFile();
+
   let info;
   for (let attempt = 0; attempt < 60; attempt++) {
     info = await getJson(`${API}${fileId}/`);
-    showFileInfo(info);
     if (info.status === "COMPLETED" || info.status === "FAILED") break;
+    setProgress("process", "Reading shapes and measuring them…");
     await sleep(1000);
   }
 
   if (info.status === "FAILED") {
-    showMessage(`Processing failed: ${info.error_message}`, true);
-    clearResults();
+    setProgress(null);
+    showError(`Couldn't measure ${info.filename}`, info.error_message || "Processing failed.");
+    hideDetails();
     return;
   }
   if (info.status !== "COMPLETED") {
-    showMessage("Still processing… try again in a moment.", true);
+    showError("Still working", "This file is taking longer than usual. Click it in the list in a moment.");
     return;
   }
 
-  showMessage("");
-  showMeasurements(await getJson(`${API}${fileId}/measurements/`));
-  loadHistory();
+  const data = await getJson(`${API}${fileId}/measurements/`);
+  showDetails(info, data);
 }
 
-function clearResults() {
-  $("feature-rows").innerHTML = "";
+function hideDetails() {
+  $("details").hidden = true;
+  document.querySelector(".app").classList.add("no-details");
   shapesLayer.clearLayers();
-  ["stat-features", "stat-area", "stat-length", "stat-issues"].forEach((id) => ($(id).textContent = "–"));
-  ["stat-area-sub", "stat-length-sub"].forEach((id) => ($(id).textContent = ""));
+  $("map-note").hidden = true;
+  map.invalidateSize();
 }
 
 async function uploadFile(file) {
   if (!file) return;
-  showMessage(`Uploading ${file.name}…`);
+  showError(null);
+  setProgress("upload", `Uploading ${file.name}…`);
   const form = new FormData();
   form.append("file", file);
   try {
     const upload = await getJson(API, { method: "POST", body: form });
-    if (upload.duplicate) showMessage("This file was uploaded before — showing the saved result.");
-    else showMessage("Processing…");
+    setProgress("process", upload.duplicate ? "You've uploaded this file before. Loading the saved result…" : "Reading shapes and measuring them…");
     await loadFile(upload.id);
+    if (!$("details").hidden) setProgress("done", `${file.name} measured.`);
+    await loadFiles();
   } catch (error) {
-    showMessage(error.message, true);
+    setProgress(null);
+    showError(`Couldn't upload ${file.name}`, error.message);
   }
 }
 
-async function loadHistory() {
+async function loadFiles() {
+  const list = $("file-list");
   try {
-    const files = await getJson(`${API}?limit=10`);
-    const list = $("history");
-    list.innerHTML = files.length ? "" : "<li>No uploads yet.</li>";
-    for (const f of files) {
-      const item = document.createElement("li");
-      item.innerHTML = `<span></span><span class="badge ${f.status}">${f.status}</span>`;
-      item.firstChild.textContent = `${f.filename} · ${f.feature_count} features`;
-      item.addEventListener("click", () => loadFile(f.id).catch((e) => showMessage(e.message, true)));
-      list.appendChild(item);
+    const files = await getJson(`${API}?limit=20`);
+    list.innerHTML = "";
+    if (!files.length) {
+      list.innerHTML = `<li class="file-empty">No files yet. Upload one above to get started.</li>`;
+      return;
     }
+    for (const f of files) {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.id = f.id;
+      button.innerHTML = `<span class="file-name"></span><span class="status ${f.status}"></span><span class="file-sub"></span>`;
+      button.querySelector(".file-name").textContent = f.filename;
+      button.querySelector(".status").textContent = f.status === "COMPLETED" ? "Measured" : f.status.toLowerCase();
+      button.querySelector(".file-sub").textContent =
+        `${shapes(f.feature_count)} · ${new Date(f.created_at + (f.created_at.endsWith("Z") ? "" : "Z")).toLocaleString()}`;
+      button.addEventListener("click", () => {
+        setProgress(null);
+        loadFile(f.id).catch((e) => showError("Couldn't open file", e.message));
+      });
+      li.appendChild(button);
+      list.appendChild(li);
+    }
+    highlightActiveFile();
   } catch {
-    $("history").innerHTML = "<li>Could not load history.</li>";
+    list.innerHTML = `<li class="file-empty">Couldn't load your files. Is the server running?</li>`;
   }
 }
 
-// ---------- upload box events ----------
+function highlightActiveFile() {
+  document.querySelectorAll(".file-list button").forEach((b) => b.classList.toggle("active", b.dataset.id === currentFileId));
+}
+
+// ---------- events ----------
 const dropzone = $("dropzone");
 $("file-input").addEventListener("change", (e) => {
   uploadFile(e.target.files[0]);
-  e.target.value = ""; // allow uploading the same file again
+  e.target.value = ""; // allow the same file to be chosen again
 });
 dropzone.addEventListener("dragover", (e) => {
   e.preventDefault();
@@ -225,5 +417,10 @@ dropzone.addEventListener("drop", (e) => {
   dropzone.classList.remove("dragging");
   uploadFile(e.dataTransfer.files[0]);
 });
+$("refresh-btn").addEventListener("click", loadFiles);
+$("help-btn").addEventListener("click", () => {
+  $("welcome").hidden = !$("welcome").hidden;
+});
 
-loadHistory();
+document.querySelector(".app").classList.add("no-details");
+loadFiles();

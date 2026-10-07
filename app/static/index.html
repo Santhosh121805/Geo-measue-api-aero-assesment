@@ -4,68 +4,113 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Geo Measure</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Semi+Condensed:wght@500;600;700&display=swap">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header>
-    <h1>Geo Measure</h1>
-    <p>Upload a <b>.kml</b> file or a <b>.zip</b> Shapefile to measure every feature in it.</p>
-  </header>
+  <div class="app">
+    <!-- Top bar -->
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 17 9 5l4 8 3-5 5 9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <span>Geo Measure</span>
+      </div>
+      <nav class="top-links">
+        <button id="help-btn" class="link-btn" type="button">How it works</button>
+        <a href="/docs" target="_blank" rel="noopener">API docs</a>
+      </nav>
+    </header>
 
-  <main>
-    <!-- 1. Upload -->
-    <section class="card">
-      <label id="dropzone" for="file-input">
-        <input id="file-input" type="file" accept=".kml,.zip" hidden>
-        <span id="dropzone-text">Drop a file here or <u>browse</u></span>
+    <!-- Left sidebar: upload + files -->
+    <aside class="sidebar">
+      <label id="dropzone" class="dropzone" for="file-input">
+        <input id="file-input" type="file" accept=".kml,.zip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0-5 5m5-5 5 5M4 20h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <strong>Upload a survey file</strong>
+        <span>Drop a .kml or a zipped Shapefile here, or click to browse</span>
       </label>
-      <p id="message" class="message" hidden></p>
+
+      <div id="progress" class="progress" hidden>
+        <div class="progress-steps">
+          <span data-step="upload">Uploading</span>
+          <span data-step="process">Measuring</span>
+          <span data-step="done">Done</span>
+        </div>
+        <p id="progress-text"></p>
+      </div>
+
+      <div id="error" class="error-box" role="alert" hidden></div>
+
+      <div class="files-head">
+        <h2>Your files</h2>
+        <button id="refresh-btn" class="link-btn" type="button">Refresh</button>
+      </div>
+      <ul id="file-list" class="file-list"></ul>
+    </aside>
+
+    <!-- Map -->
+    <section class="map-area">
+      <div id="map"></div>
+
+      <div class="basemap-toggle" role="group" aria-label="Map style">
+        <button type="button" data-basemap="satellite" class="active">Satellite</button>
+        <button type="button" data-basemap="streets">Streets</button>
+      </div>
+
+      <div id="map-note" class="map-note" hidden></div>
+
+      <!-- First-visit guide -->
+      <div id="welcome" class="welcome">
+        <h1>Measure your site in seconds</h1>
+        <p>Upload a map file from Google Earth, QGIS or your drone survey. We find every boundary, road and point in it and measure them.</p>
+        <ol>
+          <li><b>Upload</b> a .kml file or a .zip Shapefile on the left.</li>
+          <li><b>We measure</b> every area and line, on the real curved Earth.</li>
+          <li><b>Click any shape</b> on the map to see its numbers.</li>
+        </ol>
+        <p class="welcome-tip">No file? Try one from the <code>sample_data</code> folder.</p>
+      </div>
     </section>
 
-    <!-- 2. Result (hidden until a file is processed) -->
-    <section id="result" hidden>
-      <div class="card file-info">
-        <div><span class="label">File</span><span id="info-filename"></span></div>
-        <div><span class="label">Status</span><span id="info-status" class="badge"></span></div>
-        <div><span class="label">Source CRS</span><span id="info-crs"></span></div>
-        <div><span class="label">Measured in</span><span id="info-projected"></span></div>
+    <!-- Right panel: results -->
+    <aside id="details" class="details" hidden>
+      <div class="details-head">
+        <div>
+          <h2 id="d-filename"></h2>
+          <p id="d-meta" class="muted"></p>
+        </div>
+        <span id="d-status" class="status"></span>
       </div>
 
-      <div class="stats">
-        <div class="card stat"><span class="label">Features</span><b id="stat-features">–</b></div>
-        <div class="card stat"><span class="label">Total area</span><b id="stat-area">–</b><small id="stat-area-sub"></small></div>
-        <div class="card stat"><span class="label">Total length</span><b id="stat-length">–</b><small id="stat-length-sub"></small></div>
-        <div class="card stat"><span class="label">Repaired / unsupported</span><b id="stat-issues">–</b></div>
+      <div class="totals">
+        <div class="total">
+          <span class="total-label">Total area</span>
+          <span id="t-area" class="total-value"></span>
+          <span id="t-area-sub" class="total-sub"></span>
+        </div>
+        <div class="total">
+          <span class="total-label">Total length</span>
+          <span id="t-length" class="total-value"></span>
+          <span id="t-length-sub" class="total-sub"></span>
+        </div>
       </div>
 
-      <div class="card">
-        <div id="map"></div>
-        <p id="map-note" class="note" hidden></p>
-      </div>
+      <div id="d-counts" class="counts"></div>
 
-      <div class="card">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th><th>Name</th><th>Type</th><th>Area</th><th>Length</th>
-              <th title="Difference between UTM and geodesic (curved Earth) result">Accuracy check</th>
-              <th>Warnings</th>
-            </tr>
-          </thead>
-          <tbody id="feature-rows"></tbody>
-        </table>
-      </div>
-    </section>
+      <details class="crs-explain">
+        <summary>How was this measured?</summary>
+        <p>Your file stores positions as <b id="crs-source"></b>. Degrees are not metres, so each shape is first converted to <b id="crs-projected"></b>, a flat map grid in metres for that part of the Earth. Every result is then checked against a second calculation on the curved Earth. The "accuracy" figure on each shape is the difference between the two.</p>
+      </details>
 
-    <!-- 3. Previous uploads -->
-    <section class="card">
-      <h2>Recent uploads</h2>
-      <ul id="history"></ul>
-    </section>
-  </main>
-
-  <footer><a href="/docs">API docs</a></footer>
+      <h3 class="list-title">Shapes in this file</h3>
+      <ul id="feature-list" class="feature-list"></ul>
+    </aside>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/static/app.js"></script>
