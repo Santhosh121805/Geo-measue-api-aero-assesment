@@ -1,0 +1,11 @@
+fastapi==0.115.14
+uvicorn[standard]==0.34.3
+python-multipart==0.0.20
+geopandas==1.1.1
+pyogrio==0.11.1
+shapely==2.1.1
+pyproj==3.7.1
+SQLAlchemy==2.0.43
+pydantic==2.11.7
+pytest==8.4.1
+httpx==0.28.1
