@@ -2,6 +2,9 @@
 
 A FastAPI service that safely reads KML and zipped Shapefiles, measures each feature in metric units, and stores results in SQLite.
 
+![Homepage](docs/homepage.png)
+![Workspace](docs/workspace.png)
+
 Highlights: upload hashing and deduplication, background processing, safe ZIP extraction, per-feature projected CRS selection, geometry repair, and projected-versus-geodesic accuracy checks.
 
 ## Quick Start
@@ -220,7 +223,7 @@ The geometry is also transformed to EPSG:4326 and measured on the WGS84 ellipsoi
 - Reject unsupported extensions, empty uploads, corrupt ZIPs, excessive upload sizes, zip-slip paths, symbolic links, duplicate archive paths, oversized extraction totals, too many archive entries, and ambiguous multiple Shapefiles.
 - Require `.shp`, `.shx`, and `.dbf`; report a missing `.prj` and validate coordinates before assuming WGS84.
 - Reproject Mercator-family sources before measuring area; do not apply that rule to Transverse Mercator/UTM sources.
-- Read all KML layers, discard Z coordinates, preserve ExtendedData and nested Folder names, and warn instead of misassigning metadata if Placemark counts differ.
+- Read all KML layers and discard Z coordinates.
 - Merge Google Earth `ExtendedData` and nested Folder names by Placemark order; skip the merge with a warning if the Placemark and feature counts differ.
 - Repair invalid geometries, retain unsupported and empty geometries without crashing, and handle points without inventing measurements.
 - Return `409` for measurements while processing, `422` for failed processing, and `404` for unknown IDs.
@@ -243,5 +246,5 @@ Run it with `pytest`.
 - Compare surveys for change detection and encroachment analysis.
 - Move metadata and spatial features to PostGIS.
 - Run durable Celery/Redis workers and store uploads in S3-compatible object storage.
-- Add GeoJSON and GeoPackage input, DEM-based volume calculations, and Leaflet map previews.
+- Add GeoJSON and GeoPackage input and DEM-based volume calculations.
 - Add authentication, quotas, and rate limiting.
